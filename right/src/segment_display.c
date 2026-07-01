@@ -16,6 +16,8 @@
 #include "device.h"
 #endif
 
+#define CLOCK_CHANGE_INTERVAL 3000
+
 uint16_t changeInterval = 1500;
 uint32_t lastChange = 0;
 segment_display_slot_record_t slots[SegmentDisplaySlot_Count] = {
@@ -29,10 +31,28 @@ static uint8_t clockSyncMinute = 0;
 static uint32_t clockSyncTime = 0;
 static uint16_t clockDisplayedMinute = UINT16_MAX;
 
+static bool isClockSlot(segment_display_slot_t slot);
+
+static uint16_t getChangeInterval()
+{
+    return isClockSlot(currentSlot) ? CLOCK_CHANGE_INTERVAL : changeInterval;
+}
+
+static void scheduleSlotChange(const char* event)
+{
+    if (activeSlotCount > 1) {
+        EventScheduler_Reschedule(Timer_GetCurrentTime() + getChangeInterval(), EventSchedulerEvent_SegmentDisplayUpdate, event);
+    }
+}
+
 static void writeLedDisplay()
 {
 #ifndef __ZEPHYR__
-    LedDisplay_SetText(slots[currentSlot].len, slots[currentSlot].text);
+    if (isClockSlot(currentSlot)) {
+        LedDisplay_SetTextSimpleDigits(slots[currentSlot].len, slots[currentSlot].text);
+    } else {
+        LedDisplay_SetText(slots[currentSlot].len, slots[currentSlot].text);
+    }
 #endif
 }
 
@@ -115,9 +135,7 @@ static void changeSlot()
         } while (!isSlotSelectable(currentSlot));
     }
     lastChange = Timer_GetCurrentTime();
-    if (activeSlotCount > 1) {
-        EventScheduler_Reschedule(Timer_GetCurrentTime() + changeInterval, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - change slot.");
-    }
+    scheduleSlotChange("SegmentDisplay - change slot.");
 
     writeLedDisplay();
 }
@@ -135,9 +153,7 @@ void SegmentDisplay_SetText(uint8_t len, const char* text, segment_display_slot_
         currentSlot = SegmentDisplaySlot_ClockHour;
     }
     writeLedDisplay();
-    if (activeSlotCount > 1) {
-        EventScheduler_Reschedule(Timer_GetCurrentTime() + changeInterval, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - setText slot change");
-    }
+    scheduleSlotChange("SegmentDisplay - setText slot change");
 }
 
 void SegmentDisplay_DeactivateSlot(segment_display_slot_t slot)
@@ -163,7 +179,7 @@ void SegmentDisplay_Update()
         activeSlotCount -= slots[SegmentDisplaySlot_Debug].active ? 1 : 0;
         slots[SegmentDisplaySlot_Debug].active = false;
     }
-    if (Timer_GetCurrentTime() - lastChange >= changeInterval) {
+    if (Timer_GetCurrentTime() - lastChange >= getChangeInterval()) {
         changeSlot();
     }
 }
@@ -189,9 +205,7 @@ void SegmentDisplay_SetClock(uint8_t hour, uint8_t minute, uint8_t second)
     currentSlot = SegmentDisplaySlot_ClockHour;
     handleOverrides();
     writeLedDisplay();
-    if (activeSlotCount > 1) {
-        EventScheduler_Reschedule(Timer_GetCurrentTime() + changeInterval, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - clock slot change");
-    }
+    scheduleSlotChange("SegmentDisplay - clock slot change");
 }
 
 void SegmentDisplay_DeactivateClock()

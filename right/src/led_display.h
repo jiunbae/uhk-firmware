@@ -29,6 +29,7 @@
 // Functions:
 
     void LedDisplay_SetText(uint8_t length, const char* text);
+    void LedDisplay_SetTextSimpleDigits(uint8_t length, const char* text);
     void LedDisplay_SetLayer(layer_id_t layerId);
     bool LedDisplay_GetIcon(led_display_icon_t icon);
     void LedDisplay_SetIcon(led_display_icon_t icon, bool isEnabled);

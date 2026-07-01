@@ -116,6 +116,43 @@ static const uint16_t letterToSegmentMap[] = {
 
 #define maxSegmentChars 3
 #define ledCountPerChar 14
+#define SEG_A  (1u << 0)
+#define SEG_F  (1u << 1)
+#define SEG_B  (1u << 5)
+#define SEG_G1 (1u << 6)
+#define SEG_G2 (1u << 7)
+#define SEG_E  (1u << 8)
+#define SEG_C  (1u << 12)
+#define SEG_D  (1u << 13)
+
+static const uint16_t simpleDigitToSegmentMap[] = {
+    SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F,         // 0
+    SEG_B | SEG_C,                                         // 1
+    SEG_A | SEG_B | SEG_G1 | SEG_G2 | SEG_E | SEG_D,       // 2
+    SEG_A | SEG_B | SEG_C | SEG_D | SEG_G1 | SEG_G2,       // 3
+    SEG_F | SEG_B | SEG_C | SEG_G1 | SEG_G2,               // 4
+    SEG_A | SEG_F | SEG_G1 | SEG_G2 | SEG_C | SEG_D,       // 5
+    SEG_A | SEG_F | SEG_G1 | SEG_G2 | SEG_E | SEG_C | SEG_D, // 6
+    SEG_A | SEG_B | SEG_C,                                 // 7
+    SEG_A | SEG_B | SEG_C | SEG_D | SEG_E | SEG_F | SEG_G1 | SEG_G2, // 8
+    SEG_A | SEG_F | SEG_B | SEG_G1 | SEG_G2 | SEG_C | SEG_D, // 9
+};
+
+static uint16_t getLetterSegments(char keymapChar)
+{
+    if (keymapChar < ' ' || keymapChar > '~') {
+        return 0;
+    }
+    return letterToSegmentMap[keymapChar - ' '];
+}
+
+static uint16_t getTextSegments(char keymapChar, bool useSimpleDigits)
+{
+    if (useSimpleDigits && keymapChar >= '0' && keymapChar <= '9') {
+        return simpleDigitToSegmentMap[keymapChar - '0'];
+    }
+    return getLetterSegments(keymapChar);
+}
 
 #if DEVICE_ID == DEVICE_ID_UHK60V1
 
@@ -144,17 +181,27 @@ static const uint8_t segmentLedIds[maxSegmentChars][ledCountPerChar] = {
 
 #endif
 
-void LedDisplay_SetText(uint8_t length, const char* text)
+static void setText(uint8_t length, const char* text, bool useSimpleDigits)
 {
     for (uint8_t charId=0; charId<LED_DISPLAY_KEYMAP_NAME_LENGTH; charId++) {
         char keymapChar = charId < length ? text[charId] : ' ';
-        uint16_t charBits = letterToSegmentMap[keymapChar - ' '];
+        uint16_t charBits = getTextSegments(keymapChar, useSimpleDigits);
         for (uint8_t ledId=0; ledId<ledCountPerChar; ledId++) {
             uint8_t ledIdx = segmentLedIds[charId][ledId];
             bool isLedOn = charBits & (1 << ledId);
             LedDriverValues[LedDriverId_Left][ledIdx] = isLedOn ? DisplayBrightness : 0;
         }
     }
+}
+
+void LedDisplay_SetText(uint8_t length, const char* text)
+{
+    setText(length, text, false);
+}
+
+void LedDisplay_SetTextSimpleDigits(uint8_t length, const char* text)
+{
+    setText(length, text, true);
 }
 
 #endif
