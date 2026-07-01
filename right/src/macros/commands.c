@@ -159,7 +159,9 @@ static macro_result_t writeNum(uint32_t a)
         num[at] = a % 10 + 48;
         a = a/10;
     }
-    num[at-1] = '0';
+    if (at > 0) {
+        num[at-1] = '0';
+    }
 
     uint8_t len = MAX(2, 10-at);
 
@@ -2375,6 +2377,8 @@ static macro_result_t processCommand(parser_context_t* ctx)
             return processStartRecordingCommand(ctx, false);
         case CommandId_startRecordingBlind:
             return processStartRecordingCommand(ctx, true);
+        case CommandId_setClock:
+            return Macros_ProcessSetClockCommand(ctx);
         case CommandId_setLedTxt:
             return Macros_ProcessSetLedTxtCommand(ctx);
         case CommandId_statsRuntime:

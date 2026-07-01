@@ -19,10 +19,15 @@
 uint16_t changeInterval = 1500;
 uint32_t lastChange = 0;
 segment_display_slot_record_t slots[SegmentDisplaySlot_Count] = {
-    [SegmentDisplaySlot_Keymap] = { .text = "   ", .active = true, .len = 3 }
+    [SegmentDisplaySlot_Keymap] = { .text = { ' ', ' ', ' ' }, .active = true, .len = 3 }
 };
 uint8_t activeSlotCount = 1;
 segment_display_slot_t currentSlot = SegmentDisplaySlot_Keymap;
+static bool clockActive = false;
+static uint8_t clockSyncHour = 0;
+static uint8_t clockSyncMinute = 0;
+static uint32_t clockSyncTime = 0;
+static uint16_t clockDisplayedMinute = UINT16_MAX;
 
 static void writeLedDisplay()
 {
@@ -50,12 +55,64 @@ static bool handleOverrides()
     }
 }
 
+static bool isClockSlot(segment_display_slot_t slot)
+{
+    return slot == SegmentDisplaySlot_ClockHour || slot == SegmentDisplaySlot_ClockMinute;
+}
+
+static bool isSlotSelectable(segment_display_slot_t slot)
+{
+    if (!slots[slot].active) {
+        return false;
+    }
+    return !clockActive || slot != SegmentDisplaySlot_Keymap;
+}
+
+static void formatClockText(char* text, uint8_t value, char suffix)
+{
+    text[0] = '0' + value / 10;
+    text[1] = '0' + value % 10;
+    text[2] = suffix;
+}
+
+static void setSlotTextWithoutRefresh(segment_display_slot_t slot, const char* text)
+{
+    activeSlotCount += slots[slot].active ? 0 : 1;
+    memcpy(&slots[slot].text, text, sizeof(slots[slot].text));
+    slots[slot].len = sizeof(slots[slot].text);
+    slots[slot].active = true;
+}
+
+static void updateClockText()
+{
+    if (!clockActive) {
+        return;
+    }
+
+    uint32_t elapsedMinutes = (Timer_GetCurrentTime() - clockSyncTime) / 60000;
+    uint16_t totalMinutes = (clockSyncHour * 60 + clockSyncMinute + elapsedMinutes) % 1440;
+
+    if (totalMinutes == clockDisplayedMinute) {
+        return;
+    }
+
+    clockDisplayedMinute = totalMinutes;
+    uint8_t hour = totalMinutes / 60;
+    uint8_t minute = totalMinutes % 60;
+    char text[3];
+
+    formatClockText(text, hour, 'H');
+    setSlotTextWithoutRefresh(SegmentDisplaySlot_ClockHour, text);
+    formatClockText(text, minute, 'M');
+    setSlotTextWithoutRefresh(SegmentDisplaySlot_ClockMinute, text);
+}
+
 static void changeSlot()
 {
     if (!handleOverrides()) {
         do {
             currentSlot = (currentSlot + 1) % SegmentDisplaySlot_Count;
-        } while (!slots[currentSlot].active);
+        } while (!isSlotSelectable(currentSlot));
     }
     lastChange = Timer_GetCurrentTime();
     if (activeSlotCount > 1) {
@@ -74,7 +131,9 @@ void SegmentDisplay_SetText(uint8_t len, const char* text, segment_display_slot_
     slots[slot].active = true;
     lastChange = Timer_GetCurrentTime();
     currentSlot = slot;
-    handleOverrides();
+    if (!handleOverrides() && !isSlotSelectable(currentSlot)) {
+        currentSlot = SegmentDisplaySlot_ClockHour;
+    }
     writeLedDisplay();
     if (activeSlotCount > 1) {
         EventScheduler_Reschedule(Timer_GetCurrentTime() + changeInterval, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - setText slot change");
@@ -84,6 +143,10 @@ void SegmentDisplay_SetText(uint8_t len, const char* text, segment_display_slot_
 void SegmentDisplay_DeactivateSlot(segment_display_slot_t slot)
 {
     RETURN_IF_SEGMENT_NOT_PRESENT;
+    if (isClockSlot(slot)) {
+        clockActive = false;
+        clockDisplayedMinute = UINT16_MAX;
+    }
     activeSlotCount -= slots[slot].active ? 1 : 0;
     slots[slot].active = false;
     if (currentSlot == slot) {
@@ -95,6 +158,7 @@ void SegmentDisplay_Update()
 {
     EventVector_Unset(EventVector_SegmentDisplayNeedsUpdate);
     RETURN_IF_SEGMENT_NOT_PRESENT;
+    updateClockText();
     if (currentSlot == SegmentDisplaySlot_Debug) {
         activeSlotCount -= slots[SegmentDisplaySlot_Debug].active ? 1 : 0;
         slots[SegmentDisplaySlot_Debug].active = false;
@@ -109,6 +173,34 @@ void SegmentDisplay_UpdateKeymapText()
     RETURN_IF_SEGMENT_NOT_PRESENT;
     keymap_reference_t *currentKeymap = AllKeymaps + CurrentKeymapIndex;
     SegmentDisplay_SetText(currentKeymap->abbreviationLen, currentKeymap->abbreviation, SegmentDisplaySlot_Keymap);
+}
+
+void SegmentDisplay_SetClock(uint8_t hour, uint8_t minute, uint8_t second)
+{
+    RETURN_IF_SEGMENT_NOT_PRESENT;
+    clockSyncHour = hour;
+    clockSyncMinute = minute;
+    clockSyncTime = Timer_GetCurrentTime() - second * 1000;
+    clockDisplayedMinute = UINT16_MAX;
+    clockActive = true;
+    updateClockText();
+
+    lastChange = Timer_GetCurrentTime();
+    currentSlot = SegmentDisplaySlot_ClockHour;
+    handleOverrides();
+    writeLedDisplay();
+    if (activeSlotCount > 1) {
+        EventScheduler_Reschedule(Timer_GetCurrentTime() + changeInterval, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - clock slot change");
+    }
+}
+
+void SegmentDisplay_DeactivateClock()
+{
+    RETURN_IF_SEGMENT_NOT_PRESENT;
+    SegmentDisplay_DeactivateSlot(SegmentDisplaySlot_ClockHour);
+    SegmentDisplay_DeactivateSlot(SegmentDisplaySlot_ClockMinute);
+    clockActive = false;
+    clockDisplayedMinute = UINT16_MAX;
 }
 
 void SegmentDisplay_SerializeVar(char* buffer, macro_variable_t var)

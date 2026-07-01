@@ -236,6 +236,55 @@ macro_result_t Macros_ProcessSetLedTxtCommand(parser_context_t* ctx)
     }
 }
 
+macro_result_t Macros_ProcessSetClockCommand(parser_context_t* ctx)
+{
+#ifndef __ZEPHYR__
+    if (ConsumeToken(ctx, "off")) {
+        if (!Macros_DryRun) {
+            SegmentDisplay_DeactivateClock();
+        }
+        return MacroResult_Finished;
+    }
+
+    int32_t hour = Macros_ConsumeInt(ctx);
+    int32_t minute = Macros_ConsumeInt(ctx);
+    int32_t second = IsEnd(ctx) ? 0 : Macros_ConsumeInt(ctx);
+
+    if (Macros_ParserError || Macros_DryRun) {
+        return MacroResult_Finished;
+    }
+
+    if (hour < 0 || hour > 23) {
+        Macros_ReportErrorNum("Clock hour out of range:", hour, ctx->at);
+        return MacroResult_Finished;
+    }
+    if (minute < 0 || minute > 59) {
+        Macros_ReportErrorNum("Clock minute out of range:", minute, ctx->at);
+        return MacroResult_Finished;
+    }
+    if (second < 0 || second > 59) {
+        Macros_ReportErrorNum("Clock second out of range:", second, ctx->at);
+        return MacroResult_Finished;
+    }
+
+    SegmentDisplay_SetClock(hour, minute, second);
+#else
+    if (ConsumeToken(ctx, "off")) {
+        return MacroResult_Finished;
+    }
+
+    Macros_ConsumeInt(ctx);
+    Macros_ConsumeInt(ctx);
+    if (!IsEnd(ctx)) {
+        Macros_ConsumeInt(ctx);
+    }
+    if (!Macros_DryRun && !Macros_ParserError) {
+        Macros_ReportErrorPos(ctx, "setClock is only available on UHK60.");
+    }
+#endif
+    return MacroResult_Finished;
+}
+
 void NotifyPrintf(const char *fmt, ...)
 {
 #if DEVICE_HAS_OLED

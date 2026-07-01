@@ -153,6 +153,7 @@ typedef enum {
     CommandId_setStatus,
     CommandId_startRecording,
     CommandId_startRecordingBlind,
+    CommandId_setClock,
     CommandId_setLedTxt,
     CommandId_statsRuntime,
     CommandId_statsRecordKeyTiming,

@@ -129,6 +129,7 @@ setVar, CommandId_setVar
 setStatus, CommandId_setStatus
 startRecording, CommandId_startRecording
 startRecordingBlind, CommandId_startRecordingBlind
+setClock, CommandId_setClock
 setLedTxt, CommandId_setLedTxt
 statsRuntime, CommandId_statsRuntime
 statsRecordKeyTiming, CommandId_statsRecordKeyTiming
