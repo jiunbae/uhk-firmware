@@ -35,9 +35,24 @@ static const test_action_t test_macro_with_modifier[] = {
     TEST_END()
 };
 
+static const test_action_t test_macro_set_clock[] = {
+    TEST_SET_MACRO("u",
+        "setClock 14 37 23\n"
+        "setClock off\n"
+    ),
+    TEST_PRESS______("u"),
+    TEST_DELAY__(20),
+    TEST_EXPECT__________(""),
+    TEST_RELEASE__U("u"),
+    TEST_DELAY__(20),
+    TEST_EXPECT__________(""),
+    TEST_END()
+};
+
 static const test_t macro_tests[] = {
     { .name = "macro_two_tapkeys", .actions = test_macro_two_tapkeys },
     { .name = "macro_with_modifier", .actions = test_macro_with_modifier },
+    { .name = "macro_set_clock", .actions = test_macro_set_clock },
 };
 
 const test_module_t TestModule_Macros = {
