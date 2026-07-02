@@ -17,9 +17,11 @@
 #endif
 
 #define CLOCK_CHANGE_INTERVAL 3000
-#define TYPING_CPM_WINDOW_SECONDS 10
+#define TYPING_CPM_WINDOW_SECONDS 5
+#define TYPING_CPM_MULTIPLIER (60 / TYPING_CPM_WINDOW_SECONDS)
 #define TYPING_CPM_IDLE_TIMEOUT 30000
 #define TYPING_CPM_UPDATE_INTERVAL 1000
+#define TYPING_CPM_KEYPRESS_REFRESH_INTERVAL 500
 #define TYPING_CPM_MAX 999
 
 uint16_t changeInterval = 1500;
@@ -39,6 +41,8 @@ static uint16_t typingCpmBuckets[TYPING_CPM_WINDOW_SECONDS];
 static uint32_t typingCpmCurrentSecond = UINT32_MAX;
 static uint32_t typingCpmLastKeyTime = 0;
 static uint16_t typingCpmDisplayed = UINT16_MAX;
+static bool typingCpmDisplayDirty = false;
+static uint32_t typingCpmLastRefreshTime = 0;
 
 static bool isClockSlot(segment_display_slot_t slot);
 static bool isSimpleDigitSlot(segment_display_slot_t slot);
@@ -163,7 +167,7 @@ static uint16_t calculateTypingCpm(uint32_t now)
         keyCount += typingCpmBuckets[i];
     }
 
-    uint16_t cpm = keyCount * 6;
+    uint16_t cpm = keyCount * TYPING_CPM_MULTIPLIER;
     return cpm > TYPING_CPM_MAX ? TYPING_CPM_MAX : cpm;
 }
 
@@ -176,18 +180,18 @@ static void formatTypingCpmText(char* text, uint16_t cpm)
 
 static bool deactivateTypingCpm(uint32_t now)
 {
-    bool displayNeedsRefresh = currentSlot == SegmentDisplaySlot_TypingCpm;
+    bool displayNeedsRefresh = slots[SegmentDisplaySlot_TypingCpm].active || currentSlot == SegmentDisplaySlot_TypingCpm;
 
     activeSlotCount -= slots[SegmentDisplaySlot_TypingCpm].active ? 1 : 0;
     slots[SegmentDisplaySlot_TypingCpm].active = false;
     typingCpmActive = false;
     typingCpmDisplayed = UINT16_MAX;
+    typingCpmDisplayDirty = false;
+    typingCpmLastRefreshTime = 0;
     clearTypingCpmBuckets();
 
-    if (displayNeedsRefresh) {
-        currentSlot = clockActive ? SegmentDisplaySlot_ClockHour : SegmentDisplaySlot_Keymap;
-        lastChange = now;
-    }
+    currentSlot = clockActive ? SegmentDisplaySlot_ClockHour : SegmentDisplaySlot_Keymap;
+    lastChange = now;
 
     return displayNeedsRefresh;
 }
@@ -276,6 +280,8 @@ void SegmentDisplay_DeactivateSlot(segment_display_slot_t slot)
     } else if (slot == SegmentDisplaySlot_TypingCpm) {
         typingCpmActive = false;
         typingCpmDisplayed = UINT16_MAX;
+        typingCpmDisplayDirty = false;
+        typingCpmLastRefreshTime = 0;
         clearTypingCpmBuckets();
     }
     activeSlotCount -= slots[slot].active ? 1 : 0;
@@ -298,6 +304,10 @@ void SegmentDisplay_Update()
     }
     if (typingCpmActive) {
         segment_display_slot_t slotBeforeOverrides = currentSlot;
+        if (typingCpmDisplayDirty) {
+            displayNeedsRefresh = true;
+            typingCpmDisplayDirty = false;
+        }
         if (!handleOverrides()) {
             if (currentSlot != SegmentDisplaySlot_TypingCpm) {
                 currentSlot = SegmentDisplaySlot_TypingCpm;
@@ -309,6 +319,7 @@ void SegmentDisplay_Update()
         }
         if (displayNeedsRefresh) {
             writeLedDisplay();
+            typingCpmLastRefreshTime = now;
         }
         EventScheduler_Reschedule(now + TYPING_CPM_UPDATE_INTERVAL, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - typing CPM update");
         return;
@@ -360,10 +371,12 @@ void SegmentDisplay_RecordTypingKeypress()
 {
     RETURN_IF_SEGMENT_NOT_PRESENT;
     uint32_t now = Timer_GetCurrentTime();
+    bool wasTypingCpmActive = typingCpmActive;
 
     if (!typingCpmActive || now - typingCpmLastKeyTime >= TYPING_CPM_IDLE_TIMEOUT) {
         clearTypingCpmBuckets();
         typingCpmDisplayed = UINT16_MAX;
+        typingCpmDisplayDirty = true;
     }
 
     typingCpmActive = true;
@@ -376,8 +389,17 @@ void SegmentDisplay_RecordTypingKeypress()
         currentSlot = SegmentDisplaySlot_TypingCpm;
         lastChange = now;
     }
+    typingCpmDisplayDirty = true;
 
-    EventScheduler_Reschedule(now, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - typing CPM keypress");
+    uint32_t elapsedSinceRefresh = now - typingCpmLastRefreshTime;
+    if (!wasTypingCpmActive || elapsedSinceRefresh >= TYPING_CPM_KEYPRESS_REFRESH_INTERVAL) {
+        writeLedDisplay();
+        typingCpmDisplayDirty = false;
+        typingCpmLastRefreshTime = now;
+        EventScheduler_Reschedule(now + TYPING_CPM_UPDATE_INTERVAL, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - typing CPM keypress");
+    } else {
+        EventScheduler_Reschedule(typingCpmLastRefreshTime + TYPING_CPM_KEYPRESS_REFRESH_INTERVAL, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - typing CPM keypress");
+    }
 }
 
 void SegmentDisplay_SerializeVar(char* buffer, macro_variable_t var)
