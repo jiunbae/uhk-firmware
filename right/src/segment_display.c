@@ -17,6 +17,10 @@
 #endif
 
 #define CLOCK_CHANGE_INTERVAL 3000
+#define TYPING_CPM_WINDOW_SECONDS 10
+#define TYPING_CPM_IDLE_TIMEOUT 30000
+#define TYPING_CPM_UPDATE_INTERVAL 1000
+#define TYPING_CPM_MAX 999
 
 uint16_t changeInterval = 1500;
 uint32_t lastChange = 0;
@@ -30,11 +34,20 @@ static uint8_t clockSyncHour = 0;
 static uint8_t clockSyncMinute = 0;
 static uint32_t clockSyncTime = 0;
 static uint16_t clockDisplayedMinute = UINT16_MAX;
+static bool typingCpmActive = false;
+static uint16_t typingCpmBuckets[TYPING_CPM_WINDOW_SECONDS];
+static uint32_t typingCpmCurrentSecond = UINT32_MAX;
+static uint32_t typingCpmLastKeyTime = 0;
+static uint16_t typingCpmDisplayed = UINT16_MAX;
 
 static bool isClockSlot(segment_display_slot_t slot);
+static bool isSimpleDigitSlot(segment_display_slot_t slot);
 
 static uint16_t getChangeInterval()
 {
+    if (typingCpmActive && currentSlot == SegmentDisplaySlot_TypingCpm) {
+        return TYPING_CPM_UPDATE_INTERVAL;
+    }
     return isClockSlot(currentSlot) ? CLOCK_CHANGE_INTERVAL : changeInterval;
 }
 
@@ -48,7 +61,7 @@ static void scheduleSlotChange(const char* event)
 static void writeLedDisplay()
 {
 #ifndef __ZEPHYR__
-    if (isClockSlot(currentSlot)) {
+    if (isSimpleDigitSlot(currentSlot)) {
         LedDisplay_SetTextSimpleDigits(slots[currentSlot].len, slots[currentSlot].text);
     } else {
         LedDisplay_SetText(slots[currentSlot].len, slots[currentSlot].text);
@@ -80,10 +93,18 @@ static bool isClockSlot(segment_display_slot_t slot)
     return slot == SegmentDisplaySlot_ClockHour || slot == SegmentDisplaySlot_ClockMinute;
 }
 
+static bool isSimpleDigitSlot(segment_display_slot_t slot)
+{
+    return isClockSlot(slot) || slot == SegmentDisplaySlot_TypingCpm;
+}
+
 static bool isSlotSelectable(segment_display_slot_t slot)
 {
     if (!slots[slot].active) {
         return false;
+    }
+    if (typingCpmActive) {
+        return slot == SegmentDisplaySlot_TypingCpm;
     }
     return !clockActive || slot != SegmentDisplaySlot_Keymap;
 }
@@ -101,6 +122,96 @@ static void setSlotTextWithoutRefresh(segment_display_slot_t slot, const char* t
     memcpy(&slots[slot].text, text, sizeof(slots[slot].text));
     slots[slot].len = sizeof(slots[slot].text);
     slots[slot].active = true;
+}
+
+static void clearTypingCpmBuckets()
+{
+    memset(typingCpmBuckets, 0, sizeof(typingCpmBuckets));
+    typingCpmCurrentSecond = UINT32_MAX;
+}
+
+static void rollTypingCpmBuckets(uint32_t nowSecond)
+{
+    if (typingCpmCurrentSecond == UINT32_MAX) {
+        typingCpmCurrentSecond = nowSecond;
+        clearTypingCpmBuckets();
+        typingCpmCurrentSecond = nowSecond;
+        return;
+    }
+
+    uint32_t elapsedSeconds = nowSecond - typingCpmCurrentSecond;
+    if (elapsedSeconds == 0) {
+        return;
+    }
+
+    if (elapsedSeconds >= TYPING_CPM_WINDOW_SECONDS) {
+        clearTypingCpmBuckets();
+    } else {
+        for (uint8_t i = 1; i <= elapsedSeconds; i++) {
+            typingCpmBuckets[(typingCpmCurrentSecond + i) % TYPING_CPM_WINDOW_SECONDS] = 0;
+        }
+    }
+    typingCpmCurrentSecond = nowSecond;
+}
+
+static uint16_t calculateTypingCpm(uint32_t now)
+{
+    rollTypingCpmBuckets(now / 1000);
+
+    uint16_t keyCount = 0;
+    for (uint8_t i = 0; i < TYPING_CPM_WINDOW_SECONDS; i++) {
+        keyCount += typingCpmBuckets[i];
+    }
+
+    uint16_t cpm = keyCount * 6;
+    return cpm > TYPING_CPM_MAX ? TYPING_CPM_MAX : cpm;
+}
+
+static void formatTypingCpmText(char* text, uint16_t cpm)
+{
+    text[0] = '0' + cpm / 100;
+    text[1] = '0' + cpm % 100 / 10;
+    text[2] = '0' + cpm % 10;
+}
+
+static bool deactivateTypingCpm(uint32_t now)
+{
+    bool displayNeedsRefresh = currentSlot == SegmentDisplaySlot_TypingCpm;
+
+    activeSlotCount -= slots[SegmentDisplaySlot_TypingCpm].active ? 1 : 0;
+    slots[SegmentDisplaySlot_TypingCpm].active = false;
+    typingCpmActive = false;
+    typingCpmDisplayed = UINT16_MAX;
+    clearTypingCpmBuckets();
+
+    if (displayNeedsRefresh) {
+        currentSlot = clockActive ? SegmentDisplaySlot_ClockHour : SegmentDisplaySlot_Keymap;
+        lastChange = now;
+    }
+
+    return displayNeedsRefresh;
+}
+
+static bool updateTypingCpmText(uint32_t now)
+{
+    if (!typingCpmActive) {
+        return false;
+    }
+
+    if (now - typingCpmLastKeyTime >= TYPING_CPM_IDLE_TIMEOUT) {
+        return deactivateTypingCpm(now);
+    }
+
+    uint16_t cpm = calculateTypingCpm(now);
+    if (cpm == typingCpmDisplayed) {
+        return false;
+    }
+
+    typingCpmDisplayed = cpm;
+    char text[3];
+    formatTypingCpmText(text, cpm);
+    setSlotTextWithoutRefresh(SegmentDisplaySlot_TypingCpm, text);
+    return currentSlot == SegmentDisplaySlot_TypingCpm;
 }
 
 static void updateClockText()
@@ -150,7 +261,7 @@ void SegmentDisplay_SetText(uint8_t len, const char* text, segment_display_slot_
     lastChange = Timer_GetCurrentTime();
     currentSlot = slot;
     if (!handleOverrides() && !isSlotSelectable(currentSlot)) {
-        currentSlot = SegmentDisplaySlot_ClockHour;
+        currentSlot = typingCpmActive ? SegmentDisplaySlot_TypingCpm : SegmentDisplaySlot_ClockHour;
     }
     writeLedDisplay();
     scheduleSlotChange("SegmentDisplay - setText slot change");
@@ -162,6 +273,10 @@ void SegmentDisplay_DeactivateSlot(segment_display_slot_t slot)
     if (isClockSlot(slot)) {
         clockActive = false;
         clockDisplayedMinute = UINT16_MAX;
+    } else if (slot == SegmentDisplaySlot_TypingCpm) {
+        typingCpmActive = false;
+        typingCpmDisplayed = UINT16_MAX;
+        clearTypingCpmBuckets();
     }
     activeSlotCount -= slots[slot].active ? 1 : 0;
     slots[slot].active = false;
@@ -174,12 +289,36 @@ void SegmentDisplay_Update()
 {
     EventVector_Unset(EventVector_SegmentDisplayNeedsUpdate);
     RETURN_IF_SEGMENT_NOT_PRESENT;
+    uint32_t now = Timer_GetCurrentTime();
     updateClockText();
+    bool displayNeedsRefresh = updateTypingCpmText(now);
     if (currentSlot == SegmentDisplaySlot_Debug) {
         activeSlotCount -= slots[SegmentDisplaySlot_Debug].active ? 1 : 0;
         slots[SegmentDisplaySlot_Debug].active = false;
     }
-    if (Timer_GetCurrentTime() - lastChange >= getChangeInterval()) {
+    if (typingCpmActive) {
+        segment_display_slot_t slotBeforeOverrides = currentSlot;
+        if (!handleOverrides()) {
+            if (currentSlot != SegmentDisplaySlot_TypingCpm) {
+                currentSlot = SegmentDisplaySlot_TypingCpm;
+                lastChange = now;
+                displayNeedsRefresh = true;
+            }
+        } else if (currentSlot != slotBeforeOverrides) {
+            displayNeedsRefresh = true;
+        }
+        if (displayNeedsRefresh) {
+            writeLedDisplay();
+        }
+        EventScheduler_Reschedule(now + TYPING_CPM_UPDATE_INTERVAL, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - typing CPM update");
+        return;
+    }
+    if (displayNeedsRefresh) {
+        handleOverrides();
+        writeLedDisplay();
+        scheduleSlotChange("SegmentDisplay - typing CPM idle");
+    }
+    if (now - lastChange >= getChangeInterval()) {
         changeSlot();
     }
 }
@@ -215,6 +354,30 @@ void SegmentDisplay_DeactivateClock()
     SegmentDisplay_DeactivateSlot(SegmentDisplaySlot_ClockMinute);
     clockActive = false;
     clockDisplayedMinute = UINT16_MAX;
+}
+
+void SegmentDisplay_RecordTypingKeypress()
+{
+    RETURN_IF_SEGMENT_NOT_PRESENT;
+    uint32_t now = Timer_GetCurrentTime();
+
+    if (!typingCpmActive || now - typingCpmLastKeyTime >= TYPING_CPM_IDLE_TIMEOUT) {
+        clearTypingCpmBuckets();
+        typingCpmDisplayed = UINT16_MAX;
+    }
+
+    typingCpmActive = true;
+    typingCpmLastKeyTime = now;
+    rollTypingCpmBuckets(now / 1000);
+    typingCpmBuckets[(now / 1000) % TYPING_CPM_WINDOW_SECONDS]++;
+    updateTypingCpmText(now);
+
+    if (!handleOverrides()) {
+        currentSlot = SegmentDisplaySlot_TypingCpm;
+        lastChange = now;
+    }
+
+    EventScheduler_Reschedule(now, EventSchedulerEvent_SegmentDisplayUpdate, "SegmentDisplay - typing CPM keypress");
 }
 
 void SegmentDisplay_SerializeVar(char* buffer, macro_variable_t var)

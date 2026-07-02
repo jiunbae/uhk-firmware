@@ -19,6 +19,7 @@
         SegmentDisplaySlot_Debug,
         SegmentDisplaySlot_ClockHour,
         SegmentDisplaySlot_ClockMinute,
+        SegmentDisplaySlot_TypingCpm,
         SegmentDisplaySlot_Count,
     } segment_display_slot_t;
 
@@ -36,6 +37,7 @@
     void SegmentDisplay_SetText(uint8_t len, const char* text, segment_display_slot_t slot);
     void SegmentDisplay_SetClock(uint8_t hour, uint8_t minute, uint8_t second);
     void SegmentDisplay_DeactivateClock();
+    void SegmentDisplay_RecordTypingKeypress();
     void SegmentDisplay_SetInt(int32_t a, segment_display_slot_t slot);
     void SegmentDisplay_SetFloat(float a, segment_display_slot_t slot);
     void SegmentDisplay_SerializeInt(char* buffer, int32_t a);

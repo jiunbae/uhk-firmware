@@ -25,6 +25,7 @@
 #include "key_history.h"
 #include "key_states.h"
 #include "usb_report_updater.h"
+#include "segment_display.h"
 #include "timer.h"
 #include "config_parser/parse_keymap.h"
 #include "usb_commands/usb_command_get_debug_buffer.h"
@@ -75,6 +76,24 @@ uint32_t UsbReportUpdater_LastActivityTime;
 
 uint32_t UsbReportWindowEstimateLast = 0;
 uint32_t UsbReportWindowEstimate = 0;
+
+static bool isTypingCpmKeyAction(const key_action_t *action)
+{
+    if (action->type != KeyActionType_Keystroke || action->keystroke.keystrokeType != KeystrokeType_Basic) {
+        return false;
+    }
+
+    uint16_t scancode = action->keystroke.scancode;
+    return (scancode >= HID_KEYBOARD_SC_A && scancode <= HID_KEYBOARD_SC_0_AND_CLOSING_PARENTHESIS)
+           || scancode == HID_KEYBOARD_SC_ENTER
+           || scancode == HID_KEYBOARD_SC_BACKSPACE
+           || scancode == HID_KEYBOARD_SC_SPACE
+           || (scancode >= HID_KEYBOARD_SC_MINUS_AND_UNDERSCORE && scancode <= HID_KEYBOARD_SC_SLASH_AND_QUESTION_MARK)
+           || (scancode >= HID_KEYBOARD_SC_KEYPAD_SLASH && scancode <= HID_KEYBOARD_SC_KEYPAD_DOT_AND_DELETE)
+           || scancode == HID_KEYBOARD_SC_NON_US_BACKSLASH_AND_PIPE
+           || scancode == HID_KEYBOARD_SC_KEYPAD_EQUAL_SIGN
+           || scancode == HID_KEYBOARD_SC_INTERNATIONAL1;
+}
 
 
 volatile uint8_t UsbReportUpdateSemaphore = 0;
@@ -773,6 +792,9 @@ static void updateActionStates() {
                     if (Postponer_LastKeyMods != 0) {
                         actionCache[slotId][keyId].action.keystroke.modifiers = Postponer_LastKeyMods;
                         Postponer_LastKeyMods = 0;
+                    }
+                    if (isTypingCpmKeyAction(&actionCache[slotId][keyId].action)) {
+                        SegmentDisplay_RecordTypingKeypress();
                     }
                     handleEventInterrupts(keyState);
                 }
