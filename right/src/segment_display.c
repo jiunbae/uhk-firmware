@@ -17,7 +17,7 @@
 #endif
 
 #define CLOCK_CHANGE_INTERVAL 3000
-#define TYPING_CPM_WINDOW_MS 5000
+#define TYPING_CPM_WINDOW_MS 10000
 #define TYPING_CPM_BUCKET_MS 250
 #define TYPING_CPM_BUCKET_COUNT (TYPING_CPM_WINDOW_MS / TYPING_CPM_BUCKET_MS)
 #define TYPING_CPM_MULTIPLIER (60000 / TYPING_CPM_WINDOW_MS)
@@ -48,6 +48,8 @@ static uint32_t typingCpmLastRefreshTime = 0;
 
 static bool isClockSlot(segment_display_slot_t slot);
 static bool isSimpleDigitSlot(segment_display_slot_t slot);
+static segment_display_slot_t getIdleSlot();
+static void updateClockText();
 
 static uint16_t getChangeInterval()
 {
@@ -102,6 +104,13 @@ static bool isClockSlot(segment_display_slot_t slot)
 static bool isSimpleDigitSlot(segment_display_slot_t slot)
 {
     return isClockSlot(slot) || slot == SegmentDisplaySlot_TypingCpm;
+}
+
+static segment_display_slot_t getIdleSlot()
+{
+    return clockActive && slots[SegmentDisplaySlot_ClockHour].active
+           ? SegmentDisplaySlot_ClockHour
+           : SegmentDisplaySlot_Keymap;
 }
 
 static bool isSlotSelectable(segment_display_slot_t slot)
@@ -192,7 +201,8 @@ static bool deactivateTypingCpm(uint32_t now)
     typingCpmLastRefreshTime = 0;
     clearTypingCpmBuckets();
 
-    currentSlot = clockActive ? SegmentDisplaySlot_ClockHour : SegmentDisplaySlot_Keymap;
+    updateClockText();
+    currentSlot = getIdleSlot();
     lastChange = now;
 
     return displayNeedsRefresh;
