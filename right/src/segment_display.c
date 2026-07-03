@@ -21,7 +21,7 @@
 #define TYPING_CPM_BUCKET_MS 250
 #define TYPING_CPM_BUCKET_COUNT (TYPING_CPM_WINDOW_MS / TYPING_CPM_BUCKET_MS)
 #define TYPING_CPM_MULTIPLIER (60000 / TYPING_CPM_WINDOW_MS)
-#define TYPING_CPM_IDLE_TIMEOUT 3000
+#define TYPING_CPM_ZERO_HOLD_MS 3000
 #define TYPING_CPM_UPDATE_INTERVAL 250
 #define TYPING_CPM_KEYPRESS_REFRESH_INTERVAL 250
 #define TYPING_CPM_MAX 999
@@ -41,10 +41,10 @@ static uint16_t clockDisplayedMinute = UINT16_MAX;
 static bool typingCpmActive = false;
 static uint16_t typingCpmBuckets[TYPING_CPM_BUCKET_COUNT];
 static uint32_t typingCpmCurrentBucket = UINT32_MAX;
-static uint32_t typingCpmLastKeyTime = 0;
 static uint16_t typingCpmDisplayed = UINT16_MAX;
 static bool typingCpmDisplayDirty = false;
 static uint32_t typingCpmLastRefreshTime = 0;
+static uint32_t typingCpmZeroDisplayTime = UINT32_MAX;
 
 static bool isClockSlot(segment_display_slot_t slot);
 static bool isSimpleDigitSlot(segment_display_slot_t slot);
@@ -199,6 +199,7 @@ static bool deactivateTypingCpm(uint32_t now)
     typingCpmDisplayed = UINT16_MAX;
     typingCpmDisplayDirty = false;
     typingCpmLastRefreshTime = 0;
+    typingCpmZeroDisplayTime = UINT32_MAX;
     clearTypingCpmBuckets();
 
     updateClockText();
@@ -214,11 +215,17 @@ static bool updateTypingCpmText(uint32_t now)
         return false;
     }
 
-    if (now - typingCpmLastKeyTime >= TYPING_CPM_IDLE_TIMEOUT) {
-        return deactivateTypingCpm(now);
+    uint16_t cpm = calculateTypingCpm(now);
+    if (cpm == 0) {
+        if (typingCpmZeroDisplayTime == UINT32_MAX) {
+            typingCpmZeroDisplayTime = now;
+        } else if (now - typingCpmZeroDisplayTime >= TYPING_CPM_ZERO_HOLD_MS) {
+            return deactivateTypingCpm(now);
+        }
+    } else {
+        typingCpmZeroDisplayTime = UINT32_MAX;
     }
 
-    uint16_t cpm = calculateTypingCpm(now);
     if (cpm == typingCpmDisplayed) {
         return false;
     }
@@ -294,6 +301,7 @@ void SegmentDisplay_DeactivateSlot(segment_display_slot_t slot)
         typingCpmDisplayed = UINT16_MAX;
         typingCpmDisplayDirty = false;
         typingCpmLastRefreshTime = 0;
+        typingCpmZeroDisplayTime = UINT32_MAX;
         clearTypingCpmBuckets();
     }
     activeSlotCount -= slots[slot].active ? 1 : 0;
@@ -385,14 +393,14 @@ void SegmentDisplay_RecordTypingKeypress()
     uint32_t now = Timer_GetCurrentTime();
     bool wasTypingCpmActive = typingCpmActive;
 
-    if (!typingCpmActive || now - typingCpmLastKeyTime >= TYPING_CPM_IDLE_TIMEOUT) {
+    if (!typingCpmActive) {
         clearTypingCpmBuckets();
         typingCpmDisplayed = UINT16_MAX;
         typingCpmDisplayDirty = true;
     }
 
     typingCpmActive = true;
-    typingCpmLastKeyTime = now;
+    typingCpmZeroDisplayTime = UINT32_MAX;
     rollTypingCpmBuckets(now / TYPING_CPM_BUCKET_MS);
     typingCpmBuckets[(now / TYPING_CPM_BUCKET_MS) % TYPING_CPM_BUCKET_COUNT]++;
     updateTypingCpmText(now);
